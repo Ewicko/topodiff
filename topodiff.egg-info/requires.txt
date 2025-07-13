@@ -1,0 +1,7 @@
+blobfile>=1.0.5
+matplotlib
+opencv-python
+scikit-learn
+solidspy
+torch
+tqdm

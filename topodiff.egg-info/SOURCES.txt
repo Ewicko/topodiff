@@ -1,0 +1,7 @@
+README.md
+setup.py
+topodiff.egg-info/PKG-INFO
+topodiff.egg-info/SOURCES.txt
+topodiff.egg-info/dependency_links.txt
+topodiff.egg-info/requires.txt
+topodiff.egg-info/top_level.txt

@@ -361,6 +361,93 @@ def create_regressor(
         pool=regressor_pool,
     )
 
+def create_displacement_regressor(
+    image_size,
+    in_channels,
+    regressor_use_fp16,
+    regressor_width,
+    regressor_depth,
+    regressor_attention_resolutions,
+    regressor_use_scale_shift_norm,
+    regressor_resblock_updown,
+):
+    """
+    Create a displacement field regressor using UNetModel (not EncoderUNetModel).
+    This outputs spatial displacement fields (Ux, Uy) instead of scalar compliance.
+    """
+    if image_size == 512:
+        channel_mult = (0.5, 1, 1, 2, 2, 4, 4)
+    elif image_size == 256:
+        channel_mult = (1, 1, 2, 2, 4, 4)
+    elif image_size == 128:
+        channel_mult = (1, 1, 2, 3, 4)
+    elif image_size == 64:
+        channel_mult = (1, 2, 3, 4)
+    else:
+        raise ValueError(f"unsupported image size: {image_size}")
+
+    attention_ds = []
+    for res in regressor_attention_resolutions.split(","):
+        attention_ds.append(image_size // int(res))
+
+    # Use UNetModel for spatial output instead of EncoderUNetModel
+    return UNetModel(
+        image_size=image_size,
+        in_channels=in_channels,
+        model_channels=regressor_width,
+        out_channels=2,  # Displacement fields: Ux, Uy
+        num_res_blocks=regressor_depth,
+        attention_resolutions=tuple(attention_ds),
+        channel_mult=channel_mult,
+        use_fp16=regressor_use_fp16,
+        num_head_channels=64,
+        use_scale_shift_norm=regressor_use_scale_shift_norm,
+        resblock_updown=regressor_resblock_updown,
+        use_new_attention_order=False,
+    )
+
+def create_displacement_regressor_and_diffusion(
+    image_size,
+    in_channels,
+    regressor_use_fp16,
+    regressor_width,
+    regressor_depth,
+    regressor_attention_resolutions,
+    regressor_use_scale_shift_norm,
+    regressor_resblock_updown,
+    learn_sigma,
+    diffusion_steps,
+    noise_schedule,
+    timestep_respacing,
+    use_kl,
+    predict_xstart,
+    rescale_timesteps,
+    rescale_learned_sigmas,
+    **kwargs  # Ignore extra parameters like regressor_pool
+):
+    """Create displacement regressor and diffusion for spatial field prediction"""
+    regressor = create_displacement_regressor(
+        image_size,
+        in_channels,
+        regressor_use_fp16,
+        regressor_width,
+        regressor_depth,
+        regressor_attention_resolutions,
+        regressor_use_scale_shift_norm,
+        regressor_resblock_updown,
+    )
+    diffusion = create_gaussian_diffusion(
+        steps=diffusion_steps,
+        learn_sigma=learn_sigma,
+        noise_schedule=noise_schedule,
+        use_kl=use_kl,
+        predict_xstart=predict_xstart,
+        rescale_timesteps=rescale_timesteps,
+        rescale_learned_sigmas=rescale_learned_sigmas,
+        timestep_respacing=timestep_respacing,
+    )
+    return regressor, diffusion
+
 def create_gaussian_diffusion(
     *,
     steps=1000,
