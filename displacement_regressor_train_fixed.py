@@ -2,8 +2,8 @@
 Train a displacement field regressor using vanilla TopoDiff architecture.
 Based on regressor_train.py but modified to predict displacement fields instead of compliance.
 
-python displacement_regressor_train_fixed.py --num_samples 20000 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200\
-python displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200
+python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200\
+python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200
 """
 
 import argparse
