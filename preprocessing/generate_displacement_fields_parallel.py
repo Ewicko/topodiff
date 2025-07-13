@@ -11,13 +11,14 @@ Modified from physical_fields_generation.ipynb to extract Ux,Uy fields.
         --num_processes 20 \
         --use_existing_fields
 
- python topodiff/preprocessing/generate_displacement_fields_parallel.py \
-        --input_summary topodiff/data/dataset_2_reg/training_data_summary.npy \
-        --data_dir topodiff/data/dataset_2_reg/training_data \
-        --output_dir topodiff/data/displacement_validation_data \
-        --num_samples 10000 \
-        --num_processes 20 \
-        --use_existing_fields
+
+python topodiff/preprocessing/generate_displacement_fields_parallel.py \
+      --input_summary /workspace/dataset_1_diff/training_data_summary.npy \
+      --data_dir /workspace/dataset_1_diff/validation_data \
+      --output_dir /workspace/topodiff/data/displacement_validation_data \
+      --num_samples 67000 \
+      --num_processes 20 \
+      --use_existing_fields
 
 """
 
