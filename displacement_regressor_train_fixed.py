@@ -4,6 +4,11 @@ Based on regressor_train.py but modified to predict displacement fields instead 
 
 python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200\
 python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200
+
+python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile"
+
+
+
 """
 
 import argparse
@@ -27,6 +32,7 @@ from topodiff.script_util import (
     add_dict_to_argparser,
     args_to_dict,
     regressor_defaults,
+    create_displacement_regressor,
 )
 from topodiff.train_util import parse_resume_step_from_filename, log_loss_dict
 
@@ -36,18 +42,134 @@ from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from sklearn.metrics import r2_score
+import pickle
+import json
 
 NAME = "StorageFixed"
+
+def compute_displacement_statistics(train_displacement_dir, val_displacement_dir, train_indices, val_indices, method="global_zscore"):
+    """
+    Compute global displacement field statistics from training AND validation data
+    
+    Args:
+        train_displacement_dir: Training displacement directory
+        val_displacement_dir: Validation displacement directory  
+        train_indices: List of training sample indices
+        val_indices: List of validation sample indices
+        method: "global_zscore" or "robust_percentile"
+    
+    Returns:
+        dict: Normalization parameters
+    """
+    print(f"Computing displacement statistics using method: {method}")
+    print(f"Training samples: {len(train_indices)}, Validation samples: {len(val_indices)}")
+    
+    all_values = []
+    
+    # Collect training data
+    for idx in train_indices:
+        disp_path = f"{train_displacement_dir}/displacement_fields_{idx}.npy"
+        if os.path.exists(disp_path):
+            data = np.load(disp_path)
+            all_values.extend(data.flatten())
+    
+    # Collect validation data  
+    for idx in val_indices:
+        disp_path = f"{val_displacement_dir}/displacement_fields_{idx}.npy"
+        if os.path.exists(disp_path):
+            data = np.load(disp_path)
+            all_values.extend(data.flatten())
+    
+    all_values = np.array(all_values)
+    print(f"Collected {len(all_values)} displacement values from {len(train_indices) + len(val_indices)} samples")
+    print(f"Raw range: [{all_values.min():.3f}, {all_values.max():.3f}]")
+    
+    if method == "global_zscore":
+        stats = {
+            "method": "global_zscore",
+            "mean": float(all_values.mean()),
+            "std": float(all_values.std()),
+            "min": float(all_values.min()),
+            "max": float(all_values.max())
+        }
+        print(f"Global Z-score stats: mean={stats['mean']:.3f}, std={stats['std']:.3f}")
+        
+    elif method == "robust_percentile":
+        p1 = np.percentile(all_values, 1)
+        p99 = np.percentile(all_values, 99)
+        stats = {
+            "method": "robust_percentile", 
+            "p1": float(p1),
+            "p99": float(p99),
+            "range": float(p99 - p1),
+            "min": float(all_values.min()),
+            "max": float(all_values.max())
+        }
+        print(f"Robust percentile stats: p1={stats['p1']:.3f}, p99={stats['p99']:.3f}, range={stats['range']:.3f}")
+        
+    else:
+        raise ValueError(f"Unknown normalization method: {method}")
+    
+    return stats
+
+def normalize_displacement(displacement_field, norm_stats):
+    """
+    Normalize displacement field using precomputed statistics
+    
+    Args:
+        displacement_field: numpy array of shape (64, 64, 2)
+        norm_stats: normalization statistics dict
+        
+    Returns:
+        normalized displacement field
+    """
+    if norm_stats["method"] == "global_zscore":
+        return (displacement_field - norm_stats["mean"]) / (norm_stats["std"] + 1e-8)
+        
+    elif norm_stats["method"] == "robust_percentile":
+        normalized = (displacement_field - norm_stats["p1"]) / (norm_stats["range"] + 1e-8)
+        return np.clip(normalized, 0, 1)  # Clip to [0,1] range
+        
+    else:
+        raise ValueError(f"Unknown normalization method: {norm_stats['method']}")
+
+def denormalize_displacement(normalized_field, norm_stats):
+    """
+    Denormalize displacement field back to original scale
+    
+    Args:
+        normalized_field: normalized displacement field
+        norm_stats: normalization statistics dict
+        
+    Returns:
+        denormalized displacement field
+    """
+    if norm_stats["method"] == "global_zscore":
+        return normalized_field * norm_stats["std"] + norm_stats["mean"]
+        
+    elif norm_stats["method"] == "robust_percentile":
+        return normalized_field * norm_stats["range"] + norm_stats["p1"]
+        
+    else:
+        raise ValueError(f"Unknown normalization method: {norm_stats['method']}")
 
 class DisplacementDataset(Dataset):
     """Displacement dataset that mimics vanilla TopoDiff data loading exactly"""
     
-    def __init__(self, data_dir, displacement_dir, num_samples=100):
+    def __init__(self, data_dir, displacement_dir, num_samples=100, norm_stats=None):
         self.data_dir = data_dir
         self.displacement_dir = displacement_dir
         self.resolution = 64
+        self.norm_stats = norm_stats
         
-        # Build file lists like vanilla, but only include files that exist
+        # Auto-discover available sample indices from topology files
+        available_indices = self._discover_available_indices(data_dir, displacement_dir)
+        
+        # Limit to num_samples if specified
+        if num_samples > 0:
+            available_indices = available_indices[:num_samples]
+        
+        # Build file lists using discovered indices
         self.image_paths = []
         self.bc_paths = []
         self.load_paths = []
@@ -55,7 +177,7 @@ class DisplacementDataset(Dataset):
         self.valid_indices = []
         
         missing_count = 0
-        for i in range(num_samples):
+        for i in available_indices:
             img_path = f"{data_dir}/gt_topo_{i}.png"
             bc_path = f"{data_dir}/cons_bc_array_{i}.npy"
             load_path = f"{data_dir}/cons_load_array_{i}.npy"
@@ -77,9 +199,38 @@ class DisplacementDataset(Dataset):
         # Load deflections
         self.deflections = np.load(f"{displacement_dir}/deflections_scaled_diff.npy")
         
-        print(f"Displacement dataset initialized with {len(self.valid_indices)} valid samples")
+        print(f"Displacement dataset initialized with {len(self.valid_indices)} valid samples from indices {available_indices[:10]}{'...' if len(available_indices) > 10 else ''}")
         if missing_count > 0:
             print(f"Warning: Skipped {missing_count} missing samples")
+    
+    def _discover_available_indices(self, data_dir, displacement_dir):
+        """Auto-discover available sample indices by scanning topology files and displacement files"""
+        import glob
+        import re
+        
+        # Find all topology files and extract indices
+        topo_pattern = os.path.join(data_dir, "gt_topo_*.png")
+        topo_files = glob.glob(topo_pattern)
+        topo_indices = set()
+        for f in topo_files:
+            match = re.search(r'gt_topo_(\d+)\.png', f)
+            if match:
+                topo_indices.add(int(match.group(1)))
+        
+        # Find all displacement field files and extract indices
+        disp_pattern = os.path.join(displacement_dir, "displacement_fields_*.npy")
+        disp_files = glob.glob(disp_pattern)
+        disp_indices = set()
+        for f in disp_files:
+            match = re.search(r'displacement_fields_(\d+)\.npy', f)
+            if match:
+                disp_indices.add(int(match.group(1)))
+        
+        # Find intersection - indices that have both topology and displacement data
+        common_indices = topo_indices.intersection(disp_indices)
+        
+        # Sort and return
+        return sorted(list(common_indices))
     
     def __len__(self):
         return len(self.image_paths)
@@ -112,6 +263,10 @@ class DisplacementDataset(Dataset):
         disp_path = f"{self.displacement_dir}/displacement_fields_{valid_idx}.npy"
         displacement_fields = np.load(disp_path).astype(np.float32)
         
+        # Apply normalization if provided
+        if self.norm_stats is not None:
+            displacement_fields = normalize_displacement(displacement_fields, self.norm_stats)
+        
         # Create output dict
         out_dict = {}
         out_dict["d"] = np.array(self.deflections[valid_idx], dtype=np.float32)
@@ -143,9 +298,9 @@ class DisplacementDataset(Dataset):
         return arr[crop_y : crop_y + image_size, crop_x : crop_x + image_size]
 
 
-def load_displacement_data(data_dir, displacement_dir, batch_size, num_samples=100, shuffle=True):
+def load_displacement_data(data_dir, displacement_dir, batch_size, num_samples=100, shuffle=True, norm_stats=None):
     """Load displacement data in vanilla TopoDiff style"""
-    dataset = DisplacementDataset(data_dir, displacement_dir, num_samples)
+    dataset = DisplacementDataset(data_dir, displacement_dir, num_samples, norm_stats=norm_stats)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1, drop_last=True)
     
     while True:
@@ -232,7 +387,7 @@ def plot_prediction_vs_actual(model, data_loader, step, save_dir, plot_dir=None)
     
     model.train()
 
-def plot_loss_curves(train_losses, val_losses, steps, save_dir, plot_dir=None):
+def plot_loss_curves(train_losses, val_losses, train_steps, val_steps, save_dir, plot_dir=None):
     """Plot training and validation loss curves"""
     if dist.get_rank() != 0:  # Only plot on main process
         return
@@ -248,12 +403,11 @@ def plot_loss_curves(train_losses, val_losses, steps, save_dir, plot_dir=None):
         plt.figure(figsize=(10, 6))
         
         # Plot training loss
-        if len(train_losses) > 0:
-            plt.plot(steps[:len(train_losses)], train_losses, 'b-', label='Training Loss', linewidth=2)
+        if len(train_losses) > 0 and len(train_steps) > 0:
+            plt.plot(train_steps, train_losses, 'b-', label='Training Loss', linewidth=2)
         
         # Plot validation loss if available
-        if len(val_losses) > 0:
-            val_steps = steps[:len(val_losses)]
+        if len(val_losses) > 0 and len(val_steps) > 0:
             plt.plot(val_steps, val_losses, 'r-', label='Validation Loss', linewidth=2)
         
         plt.xlabel('Training Steps')
@@ -275,6 +429,10 @@ def plot_loss_curves(train_losses, val_losses, steps, save_dir, plot_dir=None):
 
 def main():
     args = create_argparser().parse_args()
+
+    # Ensure /workspace/tmp exists and set it as log directory
+    os.makedirs("/workspace/tmp", exist_ok=True)
+    os.environ["TOPODIFF_LOGDIR"] = "/workspace/tmp"
 
     dist_util.setup_dist()
     logger.configure()
@@ -335,13 +493,44 @@ def main():
         find_unused_parameters=False,
     )
 
+    # Compute normalization statistics if needed
+    norm_stats = None
+    if args.displacement_normalization != "none":
+        logger.log(f"Computing displacement normalization statistics using method: {args.displacement_normalization}")
+        
+        # Get available indices for both training and validation
+        def get_available_indices(data_dir, displacement_dir):
+            temp_dataset = DisplacementDataset(data_dir, displacement_dir, num_samples=-1)  # Get all available
+            return temp_dataset._discover_available_indices(data_dir, displacement_dir)
+        
+        train_indices = get_available_indices(args.data_dir, args.displacement_dir)[:args.num_samples]
+        val_indices = []
+        if args.val_data_dir and args.val_displacement_dir:
+            val_indices = get_available_indices(args.val_data_dir, args.val_displacement_dir)[:args.val_num_samples]
+        
+        # Compute statistics including both training and validation data
+        norm_stats = compute_displacement_statistics(
+            args.displacement_dir, 
+            args.val_displacement_dir if args.val_displacement_dir else args.displacement_dir,
+            train_indices, 
+            val_indices,
+            method=args.displacement_normalization
+        )
+        
+        # Save normalization statistics for inference
+        norm_stats_path = os.path.join(logger.get_dir(), "displacement_norm_stats.json")
+        with open(norm_stats_path, 'w') as f:
+            json.dump(norm_stats, f, indent=2)
+        logger.log(f"Normalization statistics saved to: {norm_stats_path}")
+
     logger.log("creating data loaders...")
     data = load_displacement_data(
         data_dir=args.data_dir,
         displacement_dir=args.displacement_dir,
         batch_size=args.batch_size,
         num_samples=args.num_samples,
-        shuffle=True
+        shuffle=True,
+        norm_stats=norm_stats
     )
     
     # Create validation data loader if validation paths are provided
@@ -353,7 +542,8 @@ def main():
             displacement_dir=args.val_displacement_dir,
             batch_size=args.batch_size,
             num_samples=args.val_num_samples,
-            shuffle=False
+            shuffle=False,
+            norm_stats=norm_stats
         )
 
     logger.log(f"creating optimizer...")
@@ -373,7 +563,8 @@ def main():
     # Initialize loss tracking for plots
     train_losses = []
     val_losses = []
-    steps_recorded = []
+    train_steps = []
+    val_steps = []
     
     # Initialize timing for time estimation
     step_times = []
@@ -408,11 +599,6 @@ def main():
             # Log losses without diffusion parameter
             for key, values in losses.items():
                 logger.logkv_mean(key, values.mean().item())
-                # Track losses for plotting
-                if prefix == "train" and key == "train_loss":
-                    train_losses.append(values.mean().item())
-                elif prefix == "val" and key == "val_loss":
-                    val_losses.append(values.mean().item())
             del losses
             loss = loss.mean()
             if loss.requires_grad:
@@ -430,14 +616,41 @@ def main():
         )
         if args.anneal_lr:
             set_annealed_lr(opt, args.lr, (step + resume_step) / args.iterations)
-        forward_backward_log(data)
+        
+        # Forward pass and track training loss
+        batch, batch_cons, extra = next(data)
+        displacement_target = extra["displacement"].to(dist_util.dev())
+        batch = batch.to(dist_util.dev())
+        batch_cons = batch_cons.to(dist_util.dev())
+        t = th.zeros(batch.shape[0], dtype=th.long, device=dist_util.dev())
+            
+        for i, (sub_batch, sub_batch_cons, sub_displacement_target, sub_t) in enumerate(
+            split_microbatches(args.microbatch, batch, batch_cons, displacement_target, t)
+        ):
+            full_batch = th.cat((sub_batch, sub_batch_cons), dim=1)
+            logits = model(full_batch, timesteps=sub_t)
+            loss = F.mse_loss(logits, sub_displacement_target)
+            
+            # Track training loss for plotting
+            train_losses.append(loss.detach().mean().item())
+            train_steps.append(step + resume_step)
+            
+            # Log training loss
+            logger.logkv_mean("train_loss", loss.detach().mean().item())
+            logger.logkv_mean("train_R2", 0.0)  # Skip R2 for now
+            
+            loss = loss.mean()
+            if loss.requires_grad:
+                if i == 0:
+                    mp_trainer.zero_grad()
+                mp_trainer.backward(loss * len(sub_batch) / len(batch))
+
         mp_trainer.optimize(opt)
         
-        # Record timing and step for loss plotting
+        # Record timing
         step_end_time = time.time()
         step_duration = step_end_time - step_start_time
         step_times.append(step_duration)
-        steps_recorded.append(step + resume_step)
         
         if not step % args.log_interval:
             # Calculate time estimation to 300,000 steps
@@ -461,7 +674,23 @@ def main():
             if val_data is not None:
                 model.eval()
                 with th.no_grad():
-                    forward_backward_log(val_data, prefix="val")
+                    val_batch, val_batch_cons, val_extra = next(val_data)
+                    val_displacement_target = val_extra["displacement"].to(dist_util.dev())
+                    val_batch = val_batch.to(dist_util.dev())
+                    val_batch_cons = val_batch_cons.to(dist_util.dev())
+                    val_t = th.zeros(val_batch.shape[0], dtype=th.long, device=dist_util.dev())
+                    
+                    val_full_batch = th.cat((val_batch, val_batch_cons), dim=1)
+                    val_logits = model(val_full_batch, timesteps=val_t)
+                    val_loss = F.mse_loss(val_logits, val_displacement_target)
+                    
+                    # Track validation loss for plotting
+                    val_losses.append(val_loss.detach().mean().item())
+                    val_steps.append(step + resume_step)
+                    
+                    # Log validation loss
+                    logger.logkv_mean("val_loss", val_loss.detach().mean().item())
+                    logger.logkv_mean("val_R2", 0.0)  # Skip R2 for now
                 model.train()
             
             logger.dumpkvs()
@@ -495,14 +724,14 @@ def main():
             save_model(mp_trainer, opt, step + resume_step)
             
             # Plot loss curves at save intervals
-            plot_loss_curves(train_losses, val_losses, steps_recorded, logger.get_dir(), args.plot_dir)
+            plot_loss_curves(train_losses, val_losses, train_steps, val_steps, logger.get_dir(), args.plot_dir)
 
     if dist.get_rank() == 0:
         logger.log("saving model...")
         save_model(mp_trainer, opt, step + resume_step)
         
         # Final loss curves plot
-        plot_loss_curves(train_losses, val_losses, steps_recorded, logger.get_dir(), args.plot_dir)
+        plot_loss_curves(train_losses, val_losses, train_steps, val_steps, logger.get_dir(), args.plot_dir)
         plot_location = args.plot_dir if args.plot_dir else logger.get_dir()
         logger.log(f"Plots saved to: {plot_location}")
     dist.barrier()
@@ -536,7 +765,7 @@ def create_argparser():
     defaults = dict(
         data_dir="/workspace/topodiff/data/dataset_2_reg/training_data",
         displacement_dir="/workspace/topodiff/data/displacement_training_data",
-        val_data_dir="/workspace/topodiff/data/dataset_1_diff/test_data_level_1",
+        val_data_dir="/workspace/topodiff/data/dataset_2_reg/validation_data",
         val_displacement_dir="/workspace/topodiff/data/displacement_validation_data",
         plot_dir="/workspace/topodiff/displacement_training_plots",
         num_samples=100,
@@ -552,6 +781,7 @@ def create_argparser():
         resume_checkpoint="",
         log_interval=10,
         save_interval=100,
+        displacement_normalization="none",  # Options: "none", "global_zscore", "robust_percentile"
     )
     defaults.update(regressor_defaults())
     parser = argparse.ArgumentParser()
