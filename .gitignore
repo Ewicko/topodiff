@@ -5,3 +5,5 @@ topodiff/data/
 checkpoints/
 
 topodiff/checkpoints/
+
+displacement_training_plots/
