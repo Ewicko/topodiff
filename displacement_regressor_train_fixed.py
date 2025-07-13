@@ -27,7 +27,6 @@ from topodiff.script_util import (
     add_dict_to_argparser,
     args_to_dict,
     regressor_defaults,
-    create_displacement_regressor,
 )
 from topodiff.train_util import parse_resume_step_from_filename, log_loss_dict
 
@@ -537,9 +536,9 @@ def create_argparser():
     defaults = dict(
         data_dir="/workspace/topodiff/data/dataset_2_reg/training_data",
         displacement_dir="/workspace/topodiff/data/displacement_training_data",
-        val_data_dir="/workspace/dataset_1_diff/test_data_level_1",
+        val_data_dir="/workspace/topodiff/data/dataset_1_diff/test_data_level_1",
         val_displacement_dir="/workspace/topodiff/data/displacement_validation_data",
-        plot_dir="/workspace/displacement_training_plots",
+        plot_dir="/workspace/topodiff/displacement_training_plots",
         num_samples=100,
         val_num_samples=1000,  # Number of validation samples (max available: ~1800)
         noised=False,  # Start with clean images
