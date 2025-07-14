@@ -7,6 +7,8 @@ python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_
 
 python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile"
 
+python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile" --advanced_loss True
+
 
 
 """
