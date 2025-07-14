@@ -45,6 +45,19 @@ from sklearn.metrics import r2_score
 import pickle
 import json
 
+# Try to import SSIM for advanced loss function
+try:
+    from torchmetrics.functional import structural_similarity_index_measure as ssim
+    SSIM_AVAILABLE = True
+except ImportError:
+    try:
+        from pytorch_msssim import ssim
+        SSIM_AVAILABLE = True
+    except ImportError:
+        print("Warning: SSIM not available. Install torchmetrics or pytorch-msssim for advanced loss.")
+        SSIM_AVAILABLE = False
+        ssim = None
+
 NAME = "StorageFixed"
 
 def compute_displacement_statistics(train_displacement_dir, val_displacement_dir, train_indices, val_indices, method="global_zscore"):
@@ -196,8 +209,8 @@ class DisplacementDataset(Dataset):
             else:
                 missing_count += 1
         
-        # Load deflections
-        self.deflections = np.load(f"{displacement_dir}/deflections_scaled_diff.npy")
+        # Note: deflections not needed for displacement field training
+        # self.deflections = np.load(f"{displacement_dir}/deflections_scaled_diff.npy")
         
         print(f"Displacement dataset initialized with {len(self.valid_indices)} valid samples from indices {available_indices[:10]}{'...' if len(available_indices) > 10 else ''}")
         if missing_count > 0:
@@ -269,7 +282,8 @@ class DisplacementDataset(Dataset):
         
         # Create output dict
         out_dict = {}
-        out_dict["d"] = np.array(self.deflections[valid_idx], dtype=np.float32)
+        # Note: deflections not needed for displacement training, only using displacement fields
+        # out_dict["d"] = np.array(self.deflections[valid_idx], dtype=np.float32)
         
         # Return in vanilla format with displacement as extra target
         out_dict["displacement"] = np.transpose(displacement_fields, [2, 0, 1]).astype(np.float32)
@@ -427,6 +441,92 @@ def plot_loss_curves(train_losses, val_losses, train_steps, val_steps, save_dir,
     except Exception as e:
         logger.log(f"Warning: Could not generate loss curves plot: {e}")
 
+def combined_loss(pred, target, topology, args, return_components=False):
+    """
+    Advanced physics-aware loss function for displacement field regression.
+    
+    Args:
+        pred: Predicted displacement fields (batch, 2, 64, 64)
+        target: Target displacement fields (batch, 2, 64, 64)
+        topology: Topology tensor (batch, 1, 64, 64) - values in [-1, 1]
+        args: Training arguments with loss weights
+        return_components: If True, return dict with individual loss components
+        
+    Returns:
+        Combined loss tensor or dict of loss components if return_components=True
+    """
+    losses = {}
+    
+    # 1. MSE Loss (base regression loss)
+    mse_loss = F.mse_loss(pred, target)
+    losses['mse'] = mse_loss
+    
+    # 2. Gradient Loss (physics-aware spatial derivatives)
+    # Compute gradients in x and y directions for both Ux and Uy components
+    pred_grad_x = pred[:, :, :, 1:] - pred[:, :, :, :-1]  # ∂/∂x
+    target_grad_x = target[:, :, :, 1:] - target[:, :, :, :-1]
+    pred_grad_y = pred[:, :, 1:, :] - pred[:, :, :-1, :]  # ∂/∂y  
+    target_grad_y = target[:, :, 1:, :] - target[:, :, :-1, :]
+    
+    grad_loss_x = F.mse_loss(pred_grad_x, target_grad_x)
+    grad_loss_y = F.mse_loss(pred_grad_y, target_grad_y)
+    grad_loss = (grad_loss_x + grad_loss_y) / 2
+    losses['gradient'] = grad_loss
+    
+    # 3. SSIM Loss for structural similarity (if available)
+    ssim_loss = th.tensor(0.0, device=pred.device)
+    if SSIM_AVAILABLE and ssim is not None:
+        try:
+            # Compute SSIM for each displacement component separately
+            ssim_ux = ssim(pred[:, 0:1], target[:, 0:1], data_range=2.0)  # Assuming [-1,1] range
+            ssim_uy = ssim(pred[:, 1:2], target[:, 1:2], data_range=2.0)
+            ssim_total = (ssim_ux + ssim_uy) / 2
+            ssim_loss = 1 - ssim_total  # Convert to loss (lower is better)
+        except Exception as e:
+            # Fallback if SSIM computation fails
+            logger.log(f"Warning: SSIM computation failed: {e}")
+            ssim_loss = th.tensor(0.0, device=pred.device)
+    losses['ssim'] = ssim_loss
+    
+    # 4. Physics-informed regularization (boundary/topology awareness)
+    physics_loss = th.tensor(0.0, device=pred.device)
+    if topology is not None:
+        # Focus on material boundaries where topology transitions occur
+        # Material boundaries are where topology values are around 0 (transition zone)
+        boundary_mask = (topology.abs() < 0.5).float()  # Material boundaries
+        
+        if boundary_mask.sum() > 0:  # Only compute if boundaries exist
+            # Apply stronger weighting to boundary regions
+            boundary_pred = pred * boundary_mask
+            boundary_target = target * boundary_mask
+            physics_loss = F.mse_loss(boundary_pred, boundary_target)
+    losses['physics'] = physics_loss
+    
+    # 5. Optional topology masking (focus loss on material regions only)
+    if args.topology_masking and topology is not None:
+        # Material mask: regions where topology > -0.5 (not void)
+        material_mask = (topology > -0.5).float()
+        
+        if material_mask.sum() > 0:  # Only apply if material exists
+            # Apply material mask to all loss components
+            masked_pred = pred * material_mask
+            masked_target = target * material_mask
+            
+            # Recompute MSE on material regions only
+            losses['mse'] = F.mse_loss(masked_pred, masked_target)
+    
+    # Combine losses with weights
+    total_loss = (losses['mse'] + 
+                  args.gradient_loss_weight * losses['gradient'] +
+                  args.ssim_loss_weight * losses['ssim'] +
+                  args.physics_loss_weight * losses['physics'])
+    
+    if return_components:
+        losses['total'] = total_loss
+        return losses
+    else:
+        return total_loss
+
 def main():
     args = create_argparser().parse_args()
 
@@ -560,6 +660,14 @@ def main():
 
     logger.log("training displacement regressor model...")
     
+    # Log which loss function is being used
+    if args.advanced_loss:
+        if not SSIM_AVAILABLE:
+            logger.log("Warning: Advanced loss enabled but SSIM not available. SSIM component will be zero.")
+        logger.log(f"Using advanced physics-aware loss with weights: gradient={args.gradient_loss_weight}, ssim={args.ssim_loss_weight}, physics={args.physics_loss_weight}, topology_masking={args.topology_masking}")
+    else:
+        logger.log("Using simple MSE loss function")
+    
     # Initialize loss tracking for plots
     train_losses = []
     val_losses = []
@@ -589,9 +697,19 @@ def main():
             # UNetModel should output correct spatial shape: (batch, 2, 64, 64)
             # No reshaping needed for displacement fields
             
-            loss = F.mse_loss(logits, sub_displacement_target)
-            losses = {}
-            losses[f"{prefix}_loss"] = loss.detach()
+            # Choose loss function based on advanced_loss flag
+            if args.advanced_loss:
+                loss_components = combined_loss(logits, sub_displacement_target, sub_batch, args, return_components=True)
+                loss = loss_components['total']
+                
+                # Log individual loss components
+                losses = {}
+                for comp_name, comp_value in loss_components.items():
+                    losses[f"{prefix}_{comp_name}_loss"] = comp_value.detach()
+            else:
+                loss = F.mse_loss(logits, sub_displacement_target)
+                losses = {}
+                losses[f"{prefix}_loss"] = loss.detach()
             
             # Skip R2 calculation for now
             losses[f"{prefix}_R2"] = th.tensor([0.0])
@@ -629,7 +747,18 @@ def main():
         ):
             full_batch = th.cat((sub_batch, sub_batch_cons), dim=1)
             logits = model(full_batch, timesteps=sub_t)
-            loss = F.mse_loss(logits, sub_displacement_target)
+            
+            # Choose loss function based on advanced_loss flag
+            if args.advanced_loss:
+                loss_components = combined_loss(logits, sub_displacement_target, sub_batch, args, return_components=True)
+                loss = loss_components['total']
+                
+                # Log individual loss components
+                for comp_name, comp_value in loss_components.items():
+                    if comp_name != 'total':
+                        logger.logkv_mean(f"train_{comp_name}_loss", comp_value.detach().mean().item())
+            else:
+                loss = F.mse_loss(logits, sub_displacement_target)
             
             # Track training loss for plotting
             train_losses.append(loss.detach().mean().item())
@@ -682,7 +811,18 @@ def main():
                     
                     val_full_batch = th.cat((val_batch, val_batch_cons), dim=1)
                     val_logits = model(val_full_batch, timesteps=val_t)
-                    val_loss = F.mse_loss(val_logits, val_displacement_target)
+                    
+                    # Choose loss function based on advanced_loss flag
+                    if args.advanced_loss:
+                        val_loss_components = combined_loss(val_logits, val_displacement_target, val_batch, args, return_components=True)
+                        val_loss = val_loss_components['total']
+                        
+                        # Log individual validation loss components
+                        for comp_name, comp_value in val_loss_components.items():
+                            if comp_name != 'total':
+                                logger.logkv_mean(f"val_{comp_name}_loss", comp_value.detach().mean().item())
+                    else:
+                        val_loss = F.mse_loss(val_logits, val_displacement_target)
                     
                     # Track validation loss for plotting
                     val_losses.append(val_loss.detach().mean().item())
@@ -763,12 +903,12 @@ def split_microbatches(microbatch, *args):
 
 def create_argparser():
     defaults = dict(
-        data_dir="/workspace/topodiff/data/dataset_2_reg/training_data",
-        displacement_dir="/workspace/topodiff/data/displacement_training_data",
+        data_dir="/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full/training_data",
+        displacement_dir="/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full/displacement_data",
         val_data_dir="/workspace/topodiff/data/dataset_2_reg/validation_data",
         val_displacement_dir="/workspace/topodiff/data/displacement_validation_data",
         plot_dir="/workspace/topodiff/displacement_training_plots",
-        num_samples=100,
+        num_samples=21915,  # Number of complete samples in full physics-consistent dataset
         val_num_samples=1000,  # Number of validation samples (max available: ~1800)
         noised=False,  # Start with clean images
         iterations=1000,
@@ -782,6 +922,12 @@ def create_argparser():
         log_interval=10,
         save_interval=100,
         displacement_normalization="none",  # Options: "none", "global_zscore", "robust_percentile"
+        # Advanced loss function options
+        advanced_loss=False,  # Enable advanced physics-aware loss function
+        gradient_loss_weight=0.1,  # Weight for gradient loss component
+        ssim_loss_weight=0.1,  # Weight for SSIM loss component  
+        physics_loss_weight=0.05,  # Weight for physics regularization
+        topology_masking=True,  # Enable topology region masking
     )
     defaults.update(regressor_defaults())
     parser = argparse.ArgumentParser()
