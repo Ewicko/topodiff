@@ -827,7 +827,7 @@ def main():
                     mp_trainer.zero_grad()
                 mp_trainer.backward(loss * len(sub_batch) / len(batch))
 
-        grad_norm = th.nn.utils.clip_grad_norm_(mp_trainer.model.parameters(), max_norm=1.0)
+        grad_norm = th.nn.utils.clip_grad_norm_(mp_trainer.model.parameters(), max_norm=0.1)
     
         
         # Log gradient norm to monitor clipping
