@@ -21,7 +21,7 @@ python topodiff/displacement_regressor_train_fixed.py \
     --log_interval 200 \
     --save_interval 200
 
-python displacement_regressor_train_fixed.py \
+python topodiff/displacement_regressor_train_fixed.py \
       --regressor_depth 8 \
       --regressor_width 256 \
       --regressor_attention_resolutions "64,32,16,8,4" \
@@ -30,7 +30,7 @@ python displacement_regressor_train_fixed.py \
       --num_samples 20000 \
       --val_num_samples 1500 \
       --iterations 300000 \
-      --batch_size 32 \
+      --batch_size 8 \
       --log_interval 200 \
       --save_interval 200
 
