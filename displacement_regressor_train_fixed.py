@@ -827,6 +827,18 @@ def main():
                     mp_trainer.zero_grad()
                 mp_trainer.backward(loss * len(sub_batch) / len(batch))
 
+        grad_norm = th.nn.utils.clip_grad_norm_(mp_trainer.model.parameters(), max_norm=1.0)
+    
+        
+        # Log gradient norm to monitor clipping
+        logger.logkv("grad_norm", grad_norm.item())
+        if grad_norm > 1.0:
+            logger.logkv("grad_clipped", 1)
+        else:
+            logger.logkv("grad_clipped", 0)
+        if grad_norm > 10.0:
+            logger.log(f"WARNING: Very large gradient norm: {grad_norm:.2f} at step {step + resume_step}")
+
         mp_trainer.optimize(opt)
         
         # Record timing
