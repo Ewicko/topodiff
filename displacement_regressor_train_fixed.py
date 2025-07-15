@@ -553,7 +553,7 @@ def main():
     
     model = create_displacement_regressor(
         in_channels=1+7,  # 1 topology + 7 constraints (3 pf + 2 loads + 2 bcs)
-        regressor_depth=4,
+        regressor_depth=args.regressor_depth,
         **displacement_regressor_args
     )
     
@@ -930,6 +930,8 @@ def create_argparser():
         ssim_loss_weight=0.1,  # Weight for SSIM loss component  
         physics_loss_weight=0.05,  # Weight for physics regularization
         topology_masking=True,  # Enable topology region masking
+        # Model architecture options
+        regressor_depth=4,  # Depth of the regressor model
     )
     defaults.update(regressor_defaults())
     parser = argparse.ArgumentParser()
