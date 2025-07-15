@@ -21,6 +21,19 @@ python topodiff/displacement_regressor_train_fixed.py \
     --log_interval 200 \
     --save_interval 200
 
+python displacement_regressor_train_fixed.py \
+      --regressor_depth 8 \
+      --regressor_width 256 \
+      --regressor_attention_resolutions "64,32,16,8,4" \
+      --advanced_loss True \
+      --displacement_normalization "robust_percentile" \
+      --num_samples 20000 \
+      --val_num_samples 1500 \
+      --iterations 300000 \
+      --batch_size 32 \
+      --log_interval 200 \
+      --save_interval 200
+
 """
 
 import argparse
@@ -413,8 +426,25 @@ def plot_prediction_vs_actual(model, data_loader, step, save_dir, plot_dir=None)
     
     model.train()
 
-def plot_loss_curves(train_losses, val_losses, train_steps, val_steps, save_dir, plot_dir=None):
-    """Plot training and validation loss curves"""
+def compute_running_average(values, window_size=100):
+    """Compute running average with specified window size"""
+    if len(values) < window_size:
+        # If we don't have enough values, use expanding window
+        return [np.mean(values[:i+1]) for i in range(len(values))]
+    
+    running_avg = []
+    for i in range(len(values)):
+        if i < window_size:
+            # Expanding window for the beginning
+            running_avg.append(np.mean(values[:i+1]))
+        else:
+            # Fixed window for the rest
+            running_avg.append(np.mean(values[i-window_size+1:i+1]))
+    
+    return running_avg
+
+def plot_loss_curves(train_losses, val_losses, train_steps, val_steps, save_dir, plot_dir=None, args=None):
+    """Plot training and validation loss curves with running averages"""
     if dist.get_rank() != 0:  # Only plot on main process
         return
         
@@ -426,15 +456,26 @@ def plot_loss_curves(train_losses, val_losses, train_steps, val_steps, save_dir,
     os.makedirs(plot_save_dir, exist_ok=True)
         
     try:
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 8))
         
         # Plot training loss
         if len(train_losses) > 0 and len(train_steps) > 0:
-            plt.plot(train_steps, train_losses, 'b-', label='Training Loss', linewidth=2)
+            # Raw training loss (lighter color, thinner line)
+            plt.plot(train_steps, train_losses, 'b-', alpha=0.3, linewidth=1, label='Training Loss (Raw)')
+            
+            # Running average of training loss (darker color, thicker line)
+            window_size = args.loss_running_avg_window if args else 100
+            train_running_avg = compute_running_average(train_losses, window_size=window_size)
+            plt.plot(train_steps, train_running_avg, 'b-', linewidth=2, label='Training Loss (Running Avg)')
         
         # Plot validation loss if available
         if len(val_losses) > 0 and len(val_steps) > 0:
-            plt.plot(val_steps, val_losses, 'r-', label='Validation Loss', linewidth=2)
+            # Raw validation loss (lighter color, thinner line)
+            plt.plot(val_steps, val_losses, 'r-', alpha=0.3, linewidth=1, label='Validation Loss (Raw)')
+            
+            # Running average of validation loss (darker color, thicker line)
+            val_running_avg = compute_running_average(val_losses, window_size=20)  # Smaller window for validation
+            plt.plot(val_steps, val_running_avg, 'r-', linewidth=2, label='Validation Loss (Running Avg)')
         
         plt.xlabel('Training Steps')
         plt.ylabel('MSE Loss')
@@ -876,14 +917,14 @@ def main():
             save_model(mp_trainer, opt, step + resume_step)
             
             # Plot loss curves at save intervals
-            plot_loss_curves(train_losses, val_losses, train_steps, val_steps, logger.get_dir(), args.plot_dir)
+            plot_loss_curves(train_losses, val_losses, train_steps, val_steps, logger.get_dir(), args.plot_dir, args)
 
     if dist.get_rank() == 0:
         logger.log("saving model...")
         save_model(mp_trainer, opt, step + resume_step)
         
         # Final loss curves plot
-        plot_loss_curves(train_losses, val_losses, train_steps, val_steps, logger.get_dir(), args.plot_dir)
+        plot_loss_curves(train_losses, val_losses, train_steps, val_steps, logger.get_dir(), args.plot_dir, args)
         plot_location = args.plot_dir if args.plot_dir else logger.get_dir()
         logger.log(f"Plots saved to: {plot_location}")
     dist.barrier()
@@ -942,6 +983,8 @@ def create_argparser():
         topology_masking=True,  # Enable topology region masking
         # Model architecture options
         regressor_depth=4,  # Depth of the regressor model
+        # Plotting options
+        loss_running_avg_window=100,  # Window size for training loss running average
     )
     defaults.update(regressor_defaults())
     parser = argparse.ArgumentParser()
