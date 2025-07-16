@@ -605,6 +605,7 @@ def main():
     model = create_displacement_regressor(
         in_channels=1+7,  # 1 topology + 7 constraints (3 pf + 2 loads + 2 bcs)
         regressor_depth=args.regressor_depth,
+        dropout=args.dropout,
         **displacement_regressor_args
     )
     
@@ -995,6 +996,7 @@ def create_argparser():
         topology_masking=True,  # Enable topology region masking
         # Model architecture options
         regressor_depth=4,  # Depth of the regressor model
+        dropout=0.3,  # Dropout probability for regularization
         # Plotting options
         loss_running_avg_window=100,  # Window size for training loss running average
     )

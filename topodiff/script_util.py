@@ -370,6 +370,7 @@ def create_displacement_regressor(
     regressor_attention_resolutions,
     regressor_use_scale_shift_norm,
     regressor_resblock_updown,
+    dropout=0.0,
 ):
     """
     Create a displacement field regressor using UNetModel (not EncoderUNetModel).
@@ -398,6 +399,7 @@ def create_displacement_regressor(
         out_channels=2,  # Displacement fields: Ux, Uy
         num_res_blocks=regressor_depth,
         attention_resolutions=tuple(attention_ds),
+        dropout=dropout,
         channel_mult=channel_mult,
         use_fp16=regressor_use_fp16,
         num_head_channels=64,
