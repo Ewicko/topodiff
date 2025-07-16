@@ -827,7 +827,7 @@ def main():
                     mp_trainer.zero_grad()
                 mp_trainer.backward(loss * len(sub_batch) / len(batch))
 
-        grad_norm = th.nn.utils.clip_grad_norm_(mp_trainer.model.parameters(), max_norm=0.1)
+        grad_norm = th.nn.utils.clip_grad_norm_(mp_trainer.model.parameters(), max_norm=0.05)
     
         
         # Log gradient norm to monitor clipping
@@ -977,7 +977,7 @@ def create_argparser():
         val_num_samples=1000,  # Number of validation samples (max available: ~1800)
         noised=False,  # Start with clean images
         iterations=1000,
-        lr=6e-4,
+        lr=1e-6,
         weight_decay=0.2,
         anneal_lr=False,
         batch_size=4,
