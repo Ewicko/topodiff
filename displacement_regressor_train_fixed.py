@@ -7,7 +7,13 @@ python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_
 
 python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile"
 
-python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile" --advanced_loss True
+python topodiff/displacement_regressor_train_fixed.py \
+    --data_dirs /topodiff/data/dataset_2_reg_physics_consistent_structured_full/training_data \
+    --displacement_dirs /topodiff/data/dataset_2_reg_physics_consistent_structured_full/displacement_data \
+    --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile" \
+    --advanced_loss True \
+    --anneal_lr True
+
 
 python topodiff/displacement_regressor_train_fixed.py \
     --regressor_depth 8 \
@@ -85,41 +91,69 @@ except ImportError:
 
 NAME = "StorageFixed"
 
-def compute_displacement_statistics(train_displacement_dir, val_displacement_dir, train_indices, val_indices, method="global_zscore"):
+def compute_displacement_statistics(data_dirs, displacement_dirs, val_data_dir, val_displacement_dir, num_samples, val_num_samples, method="global_zscore"):
     """
     Compute global displacement field statistics from training AND validation data
     
     Args:
-        train_displacement_dir: Training displacement directory
+        data_dirs: List of training data directories
+        displacement_dirs: List of training displacement directories
+        val_data_dir: Validation data directory
         val_displacement_dir: Validation displacement directory  
-        train_indices: List of training sample indices
-        val_indices: List of validation sample indices
+        num_samples: Number of training samples to include
+        val_num_samples: Number of validation samples to include
         method: "global_zscore" or "robust_percentile"
     
     Returns:
         dict: Normalization parameters
     """
     print(f"Computing displacement statistics using method: {method}")
-    print(f"Training samples: {len(train_indices)}, Validation samples: {len(val_indices)}")
     
     all_values = []
     
-    # Collect training data
-    for idx in train_indices:
-        disp_path = f"{train_displacement_dir}/displacement_fields_{idx}.npy"
-        if os.path.exists(disp_path):
-            data = np.load(disp_path)
-            all_values.extend(data.flatten())
+    # Collect training data from multiple directories - collect ALL samples from ALL directories
+    total_train_samples = 0
+    for data_dir, displacement_dir in zip(data_dirs, displacement_dirs):
+        # Get available indices for this directory pair
+        temp_dataset = DisplacementDataset([data_dir], [displacement_dir], num_samples=-1)
+        available_indices = temp_dataset._discover_available_indices(data_dir, displacement_dir)
+        
+        samples_from_this_dir = 0
+        for idx in available_indices:
+            disp_path = f"{displacement_dir}/displacement_fields_{idx}.npy"
+            if os.path.exists(disp_path):
+                data = np.load(disp_path)
+                all_values.extend(data.flatten())
+                samples_from_this_dir += 1
+                total_train_samples += 1
+                
+                # Stop if we've reached the total requested number of training samples
+                if num_samples > 0 and total_train_samples >= num_samples:
+                    break
+        
+        print(f"  Collected statistics from {samples_from_this_dir} samples in {displacement_dir}")
+        
+        # Stop if we've reached the total requested number of training samples
+        if num_samples > 0 and total_train_samples >= num_samples:
+            break
     
-    # Collect validation data  
-    for idx in val_indices:
-        disp_path = f"{val_displacement_dir}/displacement_fields_{idx}.npy"
-        if os.path.exists(disp_path):
-            data = np.load(disp_path)
-            all_values.extend(data.flatten())
+    # Collect validation data
+    val_samples_collected = 0
+    if val_data_dir and val_displacement_dir:
+        temp_dataset = DisplacementDataset([val_data_dir], [val_displacement_dir], num_samples=-1)
+        val_available_indices = temp_dataset._discover_available_indices(val_data_dir, val_displacement_dir)
+        
+        for idx in val_available_indices[:val_num_samples]:
+            disp_path = f"{val_displacement_dir}/displacement_fields_{idx}.npy"
+            if os.path.exists(disp_path):
+                data = np.load(disp_path)
+                all_values.extend(data.flatten())
+                val_samples_collected += 1
+    
+    print(f"Total samples for statistics: {total_train_samples} training + {val_samples_collected} validation = {total_train_samples + val_samples_collected}")
     
     all_values = np.array(all_values)
-    print(f"Collected {len(all_values)} displacement values from {len(train_indices) + len(val_indices)} samples")
+    print(f"Collected {len(all_values)} displacement values from {total_train_samples + val_samples_collected} samples")
     print(f"Raw range: [{all_values.min():.3f}, {all_values.max():.3f}]")
     
     if method == "global_zscore":
@@ -194,52 +228,85 @@ def denormalize_displacement(normalized_field, norm_stats):
 class DisplacementDataset(Dataset):
     """Displacement dataset that mimics vanilla TopoDiff data loading exactly"""
     
-    def __init__(self, data_dir, displacement_dir, num_samples=100, norm_stats=None):
-        self.data_dir = data_dir
-        self.displacement_dir = displacement_dir
+    def __init__(self, data_dirs, displacement_dirs, num_samples=100, norm_stats=None):
+        # Handle both single directory and list of directories
+        if isinstance(data_dirs, str):
+            data_dirs = [data_dirs]
+        if isinstance(displacement_dirs, str):
+            displacement_dirs = [displacement_dirs]
+            
+        self.data_dirs = data_dirs
+        self.displacement_dirs = displacement_dirs
         self.resolution = 64
         self.norm_stats = norm_stats
         
-        # Auto-discover available sample indices from topology files
-        available_indices = self._discover_available_indices(data_dir, displacement_dir)
-        
-        # Limit to num_samples if specified
-        if num_samples > 0:
-            available_indices = available_indices[:num_samples]
-        
-        # Build file lists using discovered indices
+        # Build file lists by collecting ALL valid samples from ALL directories
         self.image_paths = []
         self.bc_paths = []
         self.load_paths = []
         self.pf_paths = []
-        self.valid_indices = []
+        self.displacement_paths = []
+        self.valid_indices = []  # Original sample indices for reference
+        self.source_dirs = []  # Track which directory each sample came from
         
+        total_samples_found = 0
         missing_count = 0
-        for i in available_indices:
-            img_path = f"{data_dir}/gt_topo_{i}.png"
-            bc_path = f"{data_dir}/cons_bc_array_{i}.npy"
-            load_path = f"{data_dir}/cons_load_array_{i}.npy"
-            pf_path = f"{data_dir}/cons_pf_array_{i}.npy"
-            disp_path = f"{displacement_dir}/displacement_fields_{i}.npy"
+        
+        # Iterate through each directory pair and collect ALL valid samples
+        for dir_idx, (data_dir, displacement_dir) in enumerate(zip(data_dirs, displacement_dirs)):
+            print(f"Scanning directory pair {dir_idx + 1}/{len(data_dirs)}: {data_dir} | {displacement_dir}")
             
-            # Check if all required files exist
-            if (os.path.exists(img_path) and os.path.exists(bc_path) and 
-                os.path.exists(load_path) and os.path.exists(pf_path) and 
-                os.path.exists(disp_path)):
-                self.image_paths.append(img_path)
-                self.bc_paths.append(bc_path)
-                self.load_paths.append(load_path)
-                self.pf_paths.append(pf_path)
-                self.valid_indices.append(i)
-            else:
-                missing_count += 1
+            # Get available indices for this specific directory pair
+            available_indices = self._discover_available_indices(data_dir, displacement_dir)
+            
+            samples_from_this_dir = 0
+            for i in available_indices:
+                img_path = f"{data_dir}/gt_topo_{i}.png"
+                bc_path = f"{data_dir}/cons_bc_array_{i}.npy"
+                load_path = f"{data_dir}/cons_load_array_{i}.npy"
+                pf_path = f"{data_dir}/cons_pf_array_{i}.npy"
+                disp_path = f"{displacement_dir}/displacement_fields_{i}.npy"
+                
+                # Check if all required files exist in this directory pair
+                if (os.path.exists(img_path) and os.path.exists(bc_path) and 
+                    os.path.exists(load_path) and os.path.exists(pf_path) and 
+                    os.path.exists(disp_path)):
+                    self.image_paths.append(img_path)
+                    self.bc_paths.append(bc_path)
+                    self.load_paths.append(load_path)
+                    self.pf_paths.append(pf_path)
+                    self.displacement_paths.append(disp_path)
+                    self.valid_indices.append(i)
+                    self.source_dirs.append(dir_idx)
+                    samples_from_this_dir += 1
+                    total_samples_found += 1
+                    
+                    # Stop if we've reached the requested number of samples
+                    if num_samples > 0 and total_samples_found >= num_samples:
+                        break
+                else:
+                    missing_count += 1
+            
+            print(f"  Found {samples_from_this_dir} valid samples in this directory")
+            
+            # Stop if we've reached the requested number of samples
+            if num_samples > 0 and total_samples_found >= num_samples:
+                break
         
         # Note: deflections not needed for displacement field training
         # self.deflections = np.load(f"{displacement_dir}/deflections_scaled_diff.npy")
         
-        print(f"Displacement dataset initialized with {len(self.valid_indices)} valid samples from indices {available_indices[:10]}{'...' if len(available_indices) > 10 else ''}")
+        print(f"\nDisplacement dataset initialized with {len(self.valid_indices)} total valid samples")
+        print(f"Data directories: {data_dirs}")
+        print(f"Displacement directories: {displacement_dirs}")
+        
+        # Show sample distribution across directories
+        for dir_idx in range(len(data_dirs)):
+            count = sum(1 for src_dir in self.source_dirs if src_dir == dir_idx)
+            print(f"  Directory {dir_idx + 1}: {count} samples")
+        
         if missing_count > 0:
-            print(f"Warning: Skipped {missing_count} missing samples")
+            print(f"Warning: Skipped {missing_count} missing samples across all directories")
     
     def _discover_available_indices(self, data_dir, displacement_dir):
         """Auto-discover available sample indices by scanning topology files and displacement files"""
@@ -270,12 +337,27 @@ class DisplacementDataset(Dataset):
         # Sort and return
         return sorted(list(common_indices))
     
+    def _discover_all_samples_multiple(self, data_dirs, displacement_dirs):
+        """Discover all available samples across multiple directory pairs, keeping duplicates"""
+        all_samples = []
+        
+        # Collect samples from all directory pairs, keeping all instances
+        for dir_idx, (data_dir, displacement_dir) in enumerate(zip(data_dirs, displacement_dirs)):
+            indices = self._discover_available_indices(data_dir, displacement_dir)
+            for idx in indices:
+                all_samples.append((idx, dir_idx, data_dir, displacement_dir))
+        
+        # Sort by sample index for consistency
+        all_samples.sort(key=lambda x: x[0])
+        return all_samples
+    
     def __len__(self):
         return len(self.image_paths)
     
     def __getitem__(self, idx):
-        # Use the valid index to get the correct deflection value
+        # Use the valid index and source directory info
         valid_idx = self.valid_indices[idx]
+        source_dir_idx = self.source_dirs[idx]
         
         # Load and process image EXACTLY like vanilla
         image_path = self.image_paths[idx]
@@ -298,7 +380,7 @@ class DisplacementDataset(Dataset):
         constraints = np.concatenate([pf, loads, bcs], axis=2)
         
         # Load displacement fields (our new target)
-        disp_path = f"{self.displacement_dir}/displacement_fields_{valid_idx}.npy"
+        disp_path = self.displacement_paths[idx]
         displacement_fields = np.load(disp_path).astype(np.float32)
         
         # Apply normalization if provided
@@ -337,9 +419,9 @@ class DisplacementDataset(Dataset):
         return arr[crop_y : crop_y + image_size, crop_x : crop_x + image_size]
 
 
-def load_displacement_data(data_dir, displacement_dir, batch_size, num_samples=100, shuffle=True, norm_stats=None):
+def load_displacement_data(data_dirs, displacement_dirs, batch_size, num_samples=100, shuffle=True, norm_stats=None):
     """Load displacement data in vanilla TopoDiff style"""
-    dataset = DisplacementDataset(data_dir, displacement_dir, num_samples, norm_stats=norm_stats)
+    dataset = DisplacementDataset(data_dirs, displacement_dirs, num_samples, norm_stats=norm_stats)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1, drop_last=True)
     
     while True:
@@ -652,22 +734,18 @@ def main():
     if args.displacement_normalization != "none":
         logger.log(f"Computing displacement normalization statistics using method: {args.displacement_normalization}")
         
-        # Get available indices for both training and validation
-        def get_available_indices(data_dir, displacement_dir):
-            temp_dataset = DisplacementDataset(data_dir, displacement_dir, num_samples=-1)  # Get all available
-            return temp_dataset._discover_available_indices(data_dir, displacement_dir)
-        
-        train_indices = get_available_indices(args.data_dir, args.displacement_dir)[:args.num_samples]
-        val_indices = []
-        if args.val_data_dir and args.val_displacement_dir:
-            val_indices = get_available_indices(args.val_data_dir, args.val_displacement_dir)[:args.val_num_samples]
+        # Parse multiple directories for training data
+        train_data_dirs = args.data_dirs if isinstance(args.data_dirs, list) else [args.data_dirs]
+        train_displacement_dirs = args.displacement_dirs if isinstance(args.displacement_dirs, list) else [args.displacement_dirs]
         
         # Compute statistics including both training and validation data
         norm_stats = compute_displacement_statistics(
-            args.displacement_dir, 
-            args.val_displacement_dir if args.val_displacement_dir else args.displacement_dir,
-            train_indices, 
-            val_indices,
+            train_data_dirs,
+            train_displacement_dirs,
+            args.val_data_dir,
+            args.val_displacement_dir,
+            args.num_samples,
+            args.val_num_samples,
             method=args.displacement_normalization
         )
         
@@ -678,22 +756,26 @@ def main():
         logger.log(f"Normalization statistics saved to: {norm_stats_path}")
 
     logger.log("creating data loaders...")
+    # Parse multiple directories for training data
+    train_data_dirs = args.data_dirs if isinstance(args.data_dirs, list) else [args.data_dirs]
+    train_displacement_dirs = args.displacement_dirs if isinstance(args.displacement_dirs, list) else [args.displacement_dirs]
+    
     data = load_displacement_data(
-        data_dir=args.data_dir,
-        displacement_dir=args.displacement_dir,
+        data_dirs=train_data_dirs,
+        displacement_dirs=train_displacement_dirs,
         batch_size=args.batch_size,
         num_samples=args.num_samples,
         shuffle=True,
         norm_stats=norm_stats
     )
     
-    # Create validation data loader if validation paths are provided
+    # Create validation data loader if validation paths are provided (single directory)
     val_data = None
     if args.val_data_dir and args.val_displacement_dir:
         logger.log("creating validation data loader...")
         val_data = load_displacement_data(
-            data_dir=args.val_data_dir,
-            displacement_dir=args.val_displacement_dir,
+            data_dirs=[args.val_data_dir],
+            displacement_dirs=[args.val_displacement_dir],
             batch_size=args.batch_size,
             num_samples=args.val_num_samples,
             shuffle=False,
@@ -969,8 +1051,8 @@ def split_microbatches(microbatch, *args):
 
 def create_argparser():
     defaults = dict(
-        data_dir="/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full/training_data",
-        displacement_dir="/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full/displacement_data",
+        data_dirs=["/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full/training_data"],
+        displacement_dirs=["/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full/displacement_data"],
         val_data_dir="/workspace/topodiff/data/dataset_2_reg/validation_data",
         val_displacement_dir="/workspace/topodiff/data/displacement_validation_data",
         plot_dir="/workspace/topodiff/displacement_training_plots",
@@ -1000,9 +1082,30 @@ def create_argparser():
         # Plotting options
         loss_running_avg_window=100,  # Window size for training loss running average
     )
-    defaults.update(regressor_defaults())
+    # Update with regressor defaults but remove any conflicting keys first
+    regressor_defaults_dict = regressor_defaults()
+    defaults.update(regressor_defaults_dict)
+    
+    # Remove the list-based defaults before adding to parser
+    data_dirs_default = defaults.pop("data_dirs")
+    displacement_dirs_default = defaults.pop("displacement_dirs")
+    
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
+    
+    # Add custom arguments for multiple training directories
+    parser.add_argument(
+        "--data_dirs",
+        nargs="+",
+        help="List of training data directories to concatenate",
+        default=data_dirs_default
+    )
+    parser.add_argument(
+        "--displacement_dirs", 
+        nargs="+",
+        help="List of training displacement directories to concatenate (must match data_dirs)",
+        default=displacement_dirs_default
+    )
     return parser
 
 if __name__ == "__main__":

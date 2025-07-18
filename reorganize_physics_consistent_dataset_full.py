@@ -2,12 +2,27 @@
 """
 Updated script to reorganize dataset_2_reg_physics_consistent with topology files from dataset_1_diff.
 This will create a full dataset with all ~21,000 physics-consistent samples.
+
+
+  python topodiff/reorganize_physics_consistent_dataset_full.py \
+    --topology_dir topodiff/data/dataset_2_reg/training_data \
+    --physics_consistent_dir topodiff/data/dataset_2_reg_new_summary_file/training_data \
+    --output_dir topodiff/data/dataset_2_reg_level_1
+
+
+
+  python topodiff/reorganize_physics_consistent_dataset_full.py \
+    --topology_dir topodiff/data/dataset_2_reg/training_data \
+    --physics_consistent_dir topodiff/data/dataset_2_test_summary_file/training_data \
+    --output_dir topodiff/data/dataset_2_test_summary_file_struct
+
 """
 
 import os
 import shutil
 import glob
 import re
+import argparse
 from pathlib import Path
 
 
@@ -22,17 +37,15 @@ def find_sample_indices(data_dir, pattern):
     return indices
 
 
-def find_complete_samples():
+def find_complete_samples(topology_dir, physics_consistent_dir):
     """Find sample indices that have all required files."""
     print("Finding complete sample sets...")
     
-    # Define data paths
-    dataset_1_diff_dir = "/workspace/topodiff/data/dataset_1_diff/training_data"
-    physics_consistent_dir = "/workspace/topodiff/data/dataset_2_reg_physics_consistent/training_data"
+    # Define data paths - now passed as parameters
     
     # Find indices for each file type
     print("Scanning for topology files...")
-    topo_indices = find_sample_indices(dataset_1_diff_dir, "gt_topo_*.png")
+    topo_indices = find_sample_indices(topology_dir, "gt_topo_*.png")
     print(f"Found {len(topo_indices)} topology files")
     
     print("Scanning for constraint files...")
@@ -73,13 +86,11 @@ def create_directory_structure(base_dir):
     return training_dir, displacement_dir
 
 
-def copy_files(complete_indices, training_dir, displacement_dir):
+def copy_files(complete_indices, training_dir, displacement_dir, topology_dir, physics_consistent_dir):
     """Copy files for complete sample sets."""
     print(f"Copying files for {len(complete_indices)} complete samples...")
     
-    # Source directories
-    dataset_1_diff_dir = "/workspace/topodiff/data/dataset_1_diff/training_data"
-    physics_consistent_dir = "/workspace/topodiff/data/dataset_2_reg_physics_consistent/training_data"
+    # Source directories - now passed as parameters
     
     copied_count = 0
     failed_count = 0
@@ -87,7 +98,7 @@ def copy_files(complete_indices, training_dir, displacement_dir):
     for i, idx in enumerate(complete_indices):
         try:
             # Copy topology file from dataset_1_diff
-            topo_src = os.path.join(dataset_1_diff_dir, f"gt_topo_{idx}.png")
+            topo_src = os.path.join(topology_dir, f"gt_topo_{idx}.png")
             topo_dst = os.path.join(training_dir, f"gt_topo_{idx}.png")
             shutil.copy2(topo_src, topo_dst)
             
@@ -171,23 +182,70 @@ def validate_dataset(training_dir, displacement_dir, expected_count):
         return False
 
 
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Reorganize dataset_2_reg_physics_consistent with topology files from dataset_1_diff"
+    )
+    
+    parser.add_argument(
+        "--topology_dir",
+        type=str,
+        default="/workspace/topodiff/data/dataset_1_diff/training_data",
+        help="Path to directory containing topology PNG files (gt_topo_*.png)"
+    )
+    
+    parser.add_argument(
+        "--physics_consistent_dir", 
+        type=str,
+        default="/workspace/topodiff/data/dataset_2_reg_physics_consistent/training_data",
+        help="Path to dataset_2_reg_physics_consistent training data directory"
+    )
+    
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full",
+        help="Output directory for reorganized dataset"
+    )
+    
+    return parser.parse_args()
+
+
 def main():
     """Main function to reorganize the dataset."""
     print("=== Full Physics-Consistent Dataset Reorganization ===\n")
     
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    print(f"Source directories:")
+    print(f"  Topology: {args.topology_dir}")
+    print(f"  Physics consistent: {args.physics_consistent_dir}")
+    print(f"  Output: {args.output_dir}\n")
+    
+    # Validate input directories exist
+    if not os.path.exists(args.topology_dir):
+        print(f"Error: Topology directory does not exist: {args.topology_dir}")
+        return
+    
+    if not os.path.exists(args.physics_consistent_dir):
+        print(f"Error: Physics consistent directory does not exist: {args.physics_consistent_dir}")
+        return
+    
     # Step 1: Find complete sample sets
-    complete_indices = find_complete_samples()
+    complete_indices = find_complete_samples(args.topology_dir, args.physics_consistent_dir)
     
     if len(complete_indices) == 0:
         print("No complete sample sets found. Exiting.")
         return
     
     # Step 2: Create directory structure
-    base_dir = "/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full"
-    training_dir, displacement_dir = create_directory_structure(base_dir)
+    training_dir, displacement_dir = create_directory_structure(args.output_dir)
     
     # Step 3: Copy files
-    copy_files(complete_indices, training_dir, displacement_dir)
+    copy_files(complete_indices, training_dir, displacement_dir, 
+               args.topology_dir, args.physics_consistent_dir)
     
     # Step 4: Validate
     validation_passed = validate_dataset(training_dir, displacement_dir, len(complete_indices))
@@ -195,7 +253,7 @@ def main():
     if validation_passed:
         print(f"\n=== SUCCESS ===")
         print(f"Dataset reorganized successfully!")
-        print(f"Location: {base_dir}")
+        print(f"Location: {args.output_dir}")
         print(f"Total samples: {len(complete_indices)}")
         print(f"\nUpdate your training script to use:")
         print(f"  --data_dir {training_dir}")

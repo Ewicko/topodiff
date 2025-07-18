@@ -11,13 +11,29 @@ represent actual structural response.
 RECOMMENDED USAGE (complete physics-consistent dataset):
 python topodiff/preprocessing/generate_displacement_fields_parallel.py \
     --input_summary /workspace/dataset_1_diff/training_data_summary.npy \
-    --data_dir /workspace/topodiff/data/dataset_2_reg/training_data \
+    --topology_dir /workspace/topodiff/data/dataset_2_reg/training_data \
     --output_dir /workspace/topodiff/data/dataset_2_reg_physics_consistent/training_data \
     --num_samples 30000 \
     --num_processes 10 \
     --generate_all_arrays
 
+RECOMMENDED USAGE (complete physics-consistent dataset):
+python topodiff/preprocessing/generate_displacement_fields_parallel.py \
+    --input_summary /workspace/dataset_1_diff/test_data_level_2_summary.npy \
+    --topology_dir /workspace/topodiff/data/dataset_2_reg/training_data \
+    --output_dir /workspace/topodiff/data/dataset_2_reg_level_2_summary_file/training_data \
+    --num_samples 30000 \
+    --num_processes 10 \
+    --generate_all_arrays
 
+
+python topodiff/preprocessing/generate_displacement_fields_parallel.py \
+    --input_summary /workspace/dataset_1_diff/new_test_summary.npy \
+    --topology_dir /workspace/topodiff/data/dataset_2_reg/training_data \
+    --output_dir /workspace/topodiff/data/dataset_2_test_summary_file/training_data \
+    --num_samples 5 \
+    --num_processes 10 \
+    --generate_all_arrays
 
 """
 
@@ -269,7 +285,7 @@ def calculate_compliance_from_strain_energy(strain_energy_density):
 
 def process_sample(args):
     """Process a single sample - designed for multiprocessing"""
-    i, sample_data, output_dir, temp_dir_base, use_existing_fields, data_dir, generate_all_arrays = args
+    i, sample_data, output_dir, temp_dir_base, use_existing_fields, topology_dir, generate_all_arrays = args
     
     # Check if output files already exist
     displacement_file = f"{output_dir}/displacement_fields_{i}.npy"
@@ -314,7 +330,7 @@ def process_sample(args):
         vf = sample_data['VF']
         
         # Load the corresponding topology image
-        topology_path = f"{data_dir}/gt_topo_{i}.png"
+        topology_path = f"{topology_dir}/gt_topo_{i}.png"
         if not os.path.exists(topology_path):
             raise FileNotFoundError(f"Topology image not found: {topology_path}")
         
@@ -398,7 +414,7 @@ def process_sample(args):
 def main():
     parser = argparse.ArgumentParser(description='Generate displacement fields in parallel')
     parser.add_argument('--input_summary', required=True, help='Path to summary .npy file')
-    parser.add_argument('--data_dir', required=True, help='Directory containing topology images (gt_topo_X.png)')
+    parser.add_argument('--topology_dir', required=True, help='Directory containing topology images (gt_topo_X.png)')
     parser.add_argument('--output_dir', required=True, help='Output directory for results') 
     parser.add_argument('--num_samples', type=int, default=10, help='Number of samples to process')
     parser.add_argument('--num_processes', type=int, default=None, help='Number of parallel processes (default: CPU count)')
@@ -445,7 +461,7 @@ def main():
     
     # Prepare arguments for parallel processing
     num_samples = min(args.num_samples, dict_array.size)
-    process_args = [(i, dict_array[i], args.output_dir, args.temp_dir, args.use_existing_fields, args.data_dir, args.generate_all_arrays) for i in range(num_samples)]
+    process_args = [(i, dict_array[i], args.output_dir, args.temp_dir, args.use_existing_fields, args.topology_dir, args.generate_all_arrays) for i in range(num_samples)]
     
     # Run parallel processing
     print(f"Processing {num_samples} samples...")

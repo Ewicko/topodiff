@@ -1,0 +1,13 @@
+{
+  "total_topologies": 6,
+  "topology_id_range": {
+    "min": 0,
+    "max": 5
+  },
+  "data_integrity_summary": {
+    "complete_topologies": 6,
+    "missing_images": 0,
+    "missing_constraints": 0,
+    "shape_issues": 0
+  }
+}

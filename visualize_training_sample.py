@@ -2,6 +2,17 @@
 """
 Script to visualize all inputs and outputs for a specific sample in the dataset_2_reg_physics_consistent_structured_full dataset.
 Shows topology, constraints, displacement fields, and compliance values.
+
+python topodiff/visualize_training_sample.py 4 \
+    --save_path topodiff/ \
+    --training_data_dir  topodiff/data/dataset_2_reg_physics_consistent_structured_full/training_data  \
+    --displacement_data_dir  topodiff/data/dataset_2_reg_physics_consistent_structured_full/displacement_data  
+
+python topodiff/visualize_training_sample.py 4 \
+    --save_path topodiff/ \
+    --training_data_dir  topodiff/data/dataset_2_test_summary_file_struct/training_data  \
+    --displacement_data_dir  topodiff/data/dataset_2_test_summary_file_struct/displacement_data  
+    
 """
 
 import os
@@ -13,14 +24,21 @@ from pathlib import Path
 
 
 class DatasetVisualizer:
-    def __init__(self, dataset_path):
+    def __init__(self, dataset_path, training_data_dir=None, displacement_data_dir=None):
         """Initialize the visualizer with dataset path."""
         self.dataset_path = Path(dataset_path)
-        # self.training_data_dir = self.dataset_path / "dataset_2_reg_physics_consistent_structured_full/training_data"
-        self.training_data_dir = self.dataset_path / "dataset_2_reg/training_data"
+        
+        if training_data_dir:
+            self.training_data_dir = Path(training_data_dir)
+        else:
+            # Default behavior
+            self.training_data_dir = self.dataset_path / "dataset_2_reg/training_data"
 
-        # self.displacement_data_dir = self.dataset_path / "dataset_2_reg_physics_consistent_structured_full/displacement_data"
-        self.displacement_data_dir = self.dataset_path / "displacement_training_data"
+        if displacement_data_dir:
+            self.displacement_data_dir = Path(displacement_data_dir)
+        else:
+            # Default behavior
+            self.displacement_data_dir = self.dataset_path / "displacement_training_data"
 
         
         # Validate dataset structure
@@ -234,6 +252,8 @@ def main():
                     #    default='/workspace/topodiff/data/dataset_2_reg_physics_consistent_structured_full',
                        default='/workspace/topodiff/data/',
                        help='Path to the structured dataset')
+    parser.add_argument('--training_data_dir', type=str, help='Path to training data directory (overrides default)')
+    parser.add_argument('--displacement_data_dir', type=str, help='Path to displacement data directory (overrides default)')
     parser.add_argument('--save_path', type=str, help='Path to save the plot (optional)')
     parser.add_argument('--no_show', action='store_true', help='Don\'t display the plot, only save')
     parser.add_argument('--list_samples', action='store_true', help='List available sample indices and exit')
@@ -242,7 +262,7 @@ def main():
     
     try:
         # Initialize visualizer
-        visualizer = DatasetVisualizer(args.dataset_path)
+        visualizer = DatasetVisualizer(args.dataset_path, args.training_data_dir, args.displacement_data_dir)
         
         # List samples if requested
         if args.list_samples:

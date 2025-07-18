@@ -1,0 +1,121 @@
+{
+  "topology_id": 4,
+  "timestamp": null,
+  "files": {
+    "topology_image": "/workspace/topodiff/data/dataset_2_reg/training_data/gt_topo_4.png",
+    "topology_image_size": 443,
+    "constraint_files": {
+      "cons_bc_array_4.npy": {
+        "exists": true,
+        "size": 65664
+      },
+      "cons_load_array_4.npy": {
+        "exists": true,
+        "size": 65664
+      },
+      "cons_pf_array_4.npy": {
+        "exists": true,
+        "size": 98432
+      }
+    }
+  },
+  "constraint_data": {
+    "boundary_conditions": {
+      "shape": [
+        64,
+        64,
+        2
+      ],
+      "min_values": [
+        0.0,
+        0.0
+      ],
+      "max_values": [
+        1.0,
+        1.0
+      ],
+      "mean_values": [
+        0.00048828125,
+        0.01611328125
+      ],
+      "std_values": [
+        0.02209169145676488,
+        0.1259112521475281
+      ],
+      "nonzero_count": [
+        2,
+        66
+      ]
+    },
+    "loads": {
+      "shape": [
+        64,
+        64,
+        2
+      ],
+      "min_values": [
+        0.0,
+        0.0
+      ],
+      "max_values": [
+        1.0,
+        0.0
+      ],
+      "mean_values": [
+        0.000244140625,
+        0.0
+      ],
+      "std_values": [
+        0.015623092534937653,
+        0.0
+      ],
+      "nonzero_count": [
+        1,
+        0
+      ]
+    },
+    "physical_fields": {
+      "shape": [
+        64,
+        64,
+        3
+      ],
+      "min_values": [
+        0.34,
+        1.7423177449659945e-07,
+        0.00045964989303424265
+      ],
+      "max_values": [
+        0.34,
+        0.18829174890184536,
+        0.5273515360213695
+      ],
+      "mean_values": [
+        0.339999999999986,
+        0.0006999045038686164,
+        0.016047003224831016
+      ],
+      "std_values": [
+        1.404432126150823e-14,
+        0.006063477132080712,
+        0.027091764419444216
+      ],
+      "nonzero_count": [
+        4096,
+        4096,
+        4096
+      ]
+    }
+  },
+  "deflection_info": {
+    "compliance_value": 0.65627130080475,
+    "deflections_file_size": 72000
+  },
+  "data_integrity": {
+    "has_topology_image": true,
+    "has_all_constraint_files": true,
+    "has_deflection_data": true,
+    "constraint_shapes_valid": true,
+    "issues": []
+  }
+}
