@@ -14,7 +14,7 @@ This will create a full dataset with all ~21,000 physics-consistent samples.
   python topodiff/reorganize_physics_consistent_dataset_full.py \
     --topology_dir topodiff/data/dataset_2_reg/training_data \
     --physics_consistent_dir topodiff/data/dataset_2_test_summary_file/training_data \
-    --output_dir topodiff/data/dataset_2_test_summary_file_struct
+    --output_dir topodiff/data/dataset_2_test_summary_file_struct_prod
 
 """
 

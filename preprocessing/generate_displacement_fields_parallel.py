@@ -28,10 +28,10 @@ python topodiff/preprocessing/generate_displacement_fields_parallel.py \
 
 
 python topodiff/preprocessing/generate_displacement_fields_parallel.py \
-    --input_summary /workspace/dataset_1_diff/new_test_summary.npy \
+    --input_summary /workspace/dataset_1_diff/new_summary.npy \
     --topology_dir /workspace/topodiff/data/dataset_2_reg/training_data \
     --output_dir /workspace/topodiff/data/dataset_2_test_summary_file/training_data \
-    --num_samples 5 \
+    --num_samples 50000 \
     --num_processes 10 \
     --generate_all_arrays
 
@@ -198,8 +198,8 @@ def node_to_pixel(node, grid_size=64):
     """Convert FEA node number (1-indexed) to (row, col) pixel coordinates"""
     node_0 = node - 1  # Convert to 0-indexed
     # FEA mesh is (grid_size+1) x (grid_size+1) = 65x65 nodes
-    row = node_0 // (grid_size + 1)
-    col = node_0 % (grid_size + 1)
+    col = node_0 // (grid_size + 1)   #This is the i
+    row = node_0 % (grid_size + 1)  #This is the j
     # Clamp to valid pixel range [0, grid_size-1]
     pixel_row = min(row, grid_size - 1)
     pixel_col = min(col, grid_size - 1)
@@ -283,9 +283,29 @@ def calculate_compliance_from_strain_energy(strain_energy_density):
     """Calculate compliance (scalar) from strain energy density"""
     return np.sum(strain_energy_density)
 
+def check_displacement_threshold(disp, threshold=200):
+    """Check if any displacement component (x or y) exceeds threshold
+    
+    Args:
+        disp: Raw displacement array from FEA (flattened, shape: (n_nodes*2,))
+        threshold: Maximum allowed displacement value (default: 500)
+        
+    Raises:
+        ValueError: If any displacement component exceeds threshold
+    """
+    # Check if any displacement value (x or y) exceeds threshold
+    max_disp = np.max(np.abs(disp))
+    
+    if max_disp > threshold:
+        raise ValueError(f"Maximum displacement {max_disp:.2f} exceeds threshold {threshold}")
+
 def process_sample(args):
     """Process a single sample - designed for multiprocessing"""
     i, sample_data, output_dir, temp_dir_base, use_existing_fields, topology_dir, generate_all_arrays = args
+
+    # print("i for gdf:", i)
+    # i = 3
+    i = sample_data['number']
     
     # Check if output files already exist
     displacement_file = f"{output_dir}/displacement_fields_{i}.npy"
@@ -347,6 +367,9 @@ def process_sample(args):
             folder_path_uniform = temp_dir_uniform if temp_dir_uniform.endswith('/') else temp_dir_uniform + '/'
             disp1, strain1, stress1 = solids_GUI(plot_contours=False, compute_strains=True, folder=folder_path_uniform)
             
+            # Check if displacement exceeds threshold
+            check_displacement_threshold(disp1)
+            
             # Extract physical fields from uniform run
             physical_fields = extract_physical_fields(stress1, strain1, vf)
             
@@ -363,6 +386,9 @@ def process_sample(args):
         # Run FEA simulation with actual topology
         folder_path_topology = temp_dir_topology if temp_dir_topology.endswith('/') else temp_dir_topology + '/'
         disp2, strain2, stress2 = solids_GUI(plot_contours=False, compute_strains=True, folder=folder_path_topology)
+        
+        # Check if displacement exceeds threshold
+        check_displacement_threshold(disp2)
         
         # Extract displacement fields from topology-specific run
         displacement_fields = extract_displacement_fields(disp2, load_x_value, load_y_value)
@@ -423,6 +449,7 @@ def main():
     parser.add_argument('--generate_all_arrays', action='store_true', help='Generate boundary condition and load arrays in addition to displacement fields')
     
     args = parser.parse_args()
+    print("args:", args)
     
     # Set number of processes
     if args.num_processes is None:

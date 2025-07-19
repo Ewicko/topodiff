@@ -3,15 +3,15 @@
 Script to visualize all inputs and outputs for a specific sample in the dataset_2_reg_physics_consistent_structured_full dataset.
 Shows topology, constraints, displacement fields, and compliance values.
 
-python topodiff/visualize_training_sample.py 4 \
+python topodiff/visualize_training_sample.py 3 \
     --save_path topodiff/ \
     --training_data_dir  topodiff/data/dataset_2_reg_physics_consistent_structured_full/training_data  \
     --displacement_data_dir  topodiff/data/dataset_2_reg_physics_consistent_structured_full/displacement_data  
 
-python topodiff/visualize_training_sample.py 4 \
+python topodiff/visualize_training_sample.py 11985 \
     --save_path topodiff/ \
-    --training_data_dir  topodiff/data/dataset_2_test_summary_file_struct/training_data  \
-    --displacement_data_dir  topodiff/data/dataset_2_test_summary_file_struct/displacement_data  
+    --training_data_dir  topodiff/data/dataset_2_test_summary_file_struct_prod/training_data  \
+    --displacement_data_dir  topodiff/data/dataset_2_test_summary_file_struct_prod/displacement_data  
     
 """
 
