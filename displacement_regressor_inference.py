@@ -14,23 +14,14 @@ python displacement_regressor_inference.py \
 
 python topodiff/displacement_regressor_inference.py \
     --model_path tmp/A4010em2model.pt \
-    --norm_stats_path tmp/A4010em2nrom_stats.json \
+    --norm_stats_path tmp/A4010em2norm_stats.json \
     --topology_path topodiff/data/dataset_2_reg/validation_data/gt_topo_25080.png \
     --bc_path topodiff/data/dataset_2_reg/validation_data/cons_bc_array_25080.npy \
     --load_path topodiff/data/dataset_2_reg/validation_data/cons_load_array_25080.npy \
     --pf_path topodiff/data/dataset_2_reg/validation_data/cons_pf_array_25080.npy \
-    --actual_displacement_path data/displacement_training_data/displacement_fields_25080.npy \
+    --actual_displacement_path topodiff/data/displacement_validation_data/displacement_fields_25080.npy \
     --output_dir topodiff/displacement_predictions
 
-python topodiff/displacement_regressor_inference.py \
-    --model_path tmp/modelStorageFixed.pt \
-    --norm_stats_path tmp/displacement_norm_stats.json \
-    --topology_path topodiff/data/dataset_2_reg/validation_data/gt_topo_0.png \
-    --bc_path topodiff/data/dataset_2_reg/validation_data/cons_bc_array_0.npy \
-    --load_path topodiff/data/dataset_2_reg/validation_data/cons_load_array_0.npy \
-    --pf_path topodiff/data/dataset_2_reg/validation_data/cons_pf_array_0.npy \
-    --actual_displacement_path data/displacement_training_data/displacement_fields_0.npy \
-    --output_dir topodiff/displacement_predictions
 
 """
 
