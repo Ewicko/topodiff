@@ -13,9 +13,36 @@ import shutil
 try:
     from tqdm import tqdm
 except ImportError:
-    # Fallback if tqdm is not installed
-    def tqdm(iterable, *args, **kwargs):
-        return iterable
+    # Fallback if tqdm is not installed - create simple progress bar
+    import sys
+    
+    class tqdm:
+        def __init__(self, iterable, desc=None, total=None):
+            self.iterable = iterable
+            self.desc = desc or ""
+            self.total = total or (len(iterable) if hasattr(iterable, '__len__') else None)
+            self.n = 0
+            
+        def __iter__(self):
+            if self.total:
+                self._print_progress()
+            for item in self.iterable:
+                yield item
+                self.n += 1
+                if self.total:
+                    self._print_progress()
+            if self.total:
+                sys.stdout.write('\n')
+                sys.stdout.flush()
+                
+        def _print_progress(self):
+            if self.total:
+                percent = int(100 * self.n / self.total)
+                bar_length = 40
+                filled_length = int(bar_length * self.n // self.total)
+                bar = '█' * filled_length + '-' * (bar_length - filled_length)
+                sys.stdout.write(f'\r{self.desc}: |{bar}| {percent}% ({self.n}/{self.total})')
+                sys.stdout.flush()
 
 
 def rotate_90_clockwise(array):
@@ -112,7 +139,7 @@ def process_dataset(input_dir, output_dir):
     
     # Process training data
     print("\nProcessing training data...")
-    for file_path in tqdm(training_files):
+    for file_path in tqdm(training_files, desc="Training data"):
         output_file = output_path / "training_data" / file_path.name
         
         if file_path.suffix == '.npy':
@@ -144,7 +171,7 @@ def process_dataset(input_dir, output_dir):
     
     # Process displacement data (compliance values - scalars)
     print("\nProcessing displacement data...")
-    for file_path in tqdm(displacement_files):
+    for file_path in tqdm(displacement_files, desc="Displacement data"):
         if file_path.suffix == '.npy':
             # Compliance is a scalar value, just copy it
             output_file = output_path / "displacement_data" / file_path.name

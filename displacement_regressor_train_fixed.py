@@ -8,11 +8,30 @@ python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_
 python topodiff/displacement_regressor_train_fixed.py --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 32 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile"
 
 python topodiff/displacement_regressor_train_fixed.py \
-    --data_dirs topodiff/data/dataset_2_test_summary_file_struct_prod/training_data \
-    --displacement_dirs topodiff/data/dataset_2_test_summary_file_struct_prod/displacement_data \
-    --num_samples 20000 --val_num_samples 1500 --iterations 300000 --batch_size 64 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile" \
+    --data_dirs topodiff/data/dataset_2_test_summary_file_struct_prod/training_data topodiff/data/dataset_2_backup_summary_file_struct_prod_rot90/training_data topodiff/data/dataset_2_backup_summary_file_struct_prod/training_data\
+    --displacement_dirs topodiff/data/dataset_2_test_summary_file_struct_prod/displacement_data topodiff/data/dataset_2_backup_summary_file_struct_prod_rot90/displacement_data topodiff/data/dataset_2_backup_summary_file_struct_prod/displacement_data\
+    --num_samples 97000 --val_num_samples 1500 --iterations 300000 --batch_size 64 --log_interval 200 --save_interval 200 --displacement_normalization "robust_percentile" \
     --advanced_loss True \
     --anneal_lr True
+
+python topodiff/displacement_regressor_train_fixed.py \
+      --data_dirs \
+          topodiff/data/dataset_2_test_summary_file_struct_prod/training_data \
+          topodiff/data/dataset_2_backup_summary_file_struct_prod_rot90/training_data \
+          topodiff/data/dataset_2_backup_summary_file_struct_prod/training_data \
+      --displacement_dirs \
+          topodiff/data/dataset_2_test_summary_file_struct_prod/displacement_data \
+          topodiff/data/dataset_2_backup_summary_file_struct_prod_rot90/displacement_data \
+          topodiff/data/dataset_2_backup_summary_file_struct_prod/displacement_data \
+      --num_samples 97000 \
+      --val_num_samples 1500 \
+      --iterations 300000 \
+      --batch_size 64 \
+      --log_interval 200 \
+      --save_interval 200 \
+      --displacement_normalization "robust_percentile" \
+      --advanced_loss True \
+      --anneal_lr True
 
 
 python topodiff/displacement_regressor_train_fixed.py \
@@ -113,13 +132,22 @@ def compute_displacement_statistics(data_dirs, displacement_dirs, val_data_dir, 
     
     # Collect training data from multiple directories - collect ALL samples from ALL directories
     total_train_samples = 0
-    for data_dir, displacement_dir in zip(data_dirs, displacement_dirs):
+    print(f"DEBUG: About to process {len(data_dirs)} directory pairs")
+    print(f"DEBUG: data_dirs = {data_dirs}")
+    print(f"DEBUG: displacement_dirs = {displacement_dirs}")
+    
+    for dir_idx, (data_dir, displacement_dir) in enumerate(zip(data_dirs, displacement_dirs)):
+        print(f"DEBUG: Processing directory pair {dir_idx + 1}/{len(data_dirs)}: {data_dir}")
         # Get available indices for this directory pair
         temp_dataset = DisplacementDataset([data_dir], [displacement_dir], num_samples=-1)
         available_indices = temp_dataset._discover_available_indices(data_dir, displacement_dir)
+        print(f"DEBUG: Found {len(available_indices)} available indices in directory {dir_idx + 1}")
         
         samples_from_this_dir = 0
-        for idx in available_indices:
+        print(f"DEBUG: Processing {len(available_indices)} samples from directory {dir_idx + 1}...")
+        for sample_idx, idx in enumerate(available_indices):
+            if sample_idx % 1000 == 0:  # Print progress every 1000 samples
+                print(f"DEBUG: Directory {dir_idx + 1}: processed {sample_idx}/{len(available_indices)} samples")
             disp_path = f"{displacement_dir}/displacement_fields_{idx}.npy"
             if os.path.exists(disp_path):
                 data = np.load(disp_path)
@@ -738,6 +766,11 @@ def main():
         train_data_dirs = args.data_dirs if isinstance(args.data_dirs, list) else [args.data_dirs]
         train_displacement_dirs = args.displacement_dirs if isinstance(args.displacement_dirs, list) else [args.displacement_dirs]
         
+        # Debug output
+        logger.log(f"DEBUG in compute stats: args.data_dirs = {args.data_dirs}")
+        logger.log(f"DEBUG in compute stats: train_data_dirs = {train_data_dirs}")
+        logger.log(f"DEBUG in compute stats: len(train_data_dirs) = {len(train_data_dirs)}")
+        
         # Compute statistics including both training and validation data
         norm_stats = compute_displacement_statistics(
             train_data_dirs,
@@ -759,6 +792,12 @@ def main():
     # Parse multiple directories for training data
     train_data_dirs = args.data_dirs if isinstance(args.data_dirs, list) else [args.data_dirs]
     train_displacement_dirs = args.displacement_dirs if isinstance(args.displacement_dirs, list) else [args.displacement_dirs]
+    
+    # Debug output
+    logger.log(f"DEBUG: args.data_dirs = {args.data_dirs}")
+    logger.log(f"DEBUG: type(args.data_dirs) = {type(args.data_dirs)}")
+    logger.log(f"DEBUG: train_data_dirs = {train_data_dirs}")
+    logger.log(f"DEBUG: len(train_data_dirs) = {len(train_data_dirs)}")
     
     data = load_displacement_data(
         data_dirs=train_data_dirs,
